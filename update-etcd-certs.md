@@ -1,0 +1,127 @@
+# 修復 K8S etcd TLS 憑證問題指南
+
+## 問題描述
+
+當伺服器內部 IP 地址更改時，etcd 的 TLS 憑證可能只包含舊 IP 地址（和 127.0.0.1），導致 Kubernetes 服務通信失敗。本指南說明如何重新生成 etcd 憑證以解決此問題。
+
+## 先決條件
+
+* 您需要擁有叢集節點的 `sudo` 或 `root` 權限。
+* 您需要存取原始的 etcd CA 憑證 (`ca.pem`) 和私鑰 (`ca-key.pem`)。在本範例中，假設它們位於 `/etc/ssl/etcd/ssl/`。
+* 確認您的系統已設定好 `$HOSTNAME` 環境變數，或者知道您目前節點的主機名稱。
+
+## 解決方法
+
+### 步驟概覽
+1. 重新產生 etcd 憑證，讓 Subject Alternative Name (SAN) 包含新 IP
+2. 替換 `/etc/ssl/etcd/ssl/` 下的相關 pem 檔案
+3. 重新啟動 etcd 服務
+
+### 詳細步驟
+
+#### 1. 安裝 cfssl 工具（如果尚未安裝）
+
+```bash
+sudo apt-get update
+sudo apt-get install -y golang-cfssl
+```
+
+#### 2. 建立新的 CSR 設定檔
+
+建立 `etcd-csr.json` 文件，確保 hosts 包含所有必要的 IP 地址：
+
+```bash
+cat > etcd-csr.json <<EOF
+{
+  "CN": "etcd",
+  "hosts": [
+    "127.0.0.1",
+    "your_ip"  # 請替換為您的新 IP 地址
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "TW",       # 國家 Country (請依實際情況修改)
+      "L": "Taipei",   # 地區 Locality (請依實際情況修改)
+      "O": "etcd",     # 組織 Organization
+      "OU": "etcd",    # 組織單位 Organizational Unit
+      "ST": "Taiwan"   # 州/省 State/Province (請依實際情況修改)
+    }
+  ]
+}
+EOF
+
+# (可選) 驗證 JSON 格式是否正確
+# cfssl certinfo -csr etcd-csr.json
+```
+
+#### 3. 建立 ca-config.json  (可選，若已有則沿用)
+
+```bash
+cat > /etc/ssl/etcd/ssl/ca-config.json <<EOF
+{
+  "signing": {
+    "default": {
+      "expiry": "8760h"
+    },
+    "profiles": {
+      "etcd": {
+        "usages": ["signing", "key encipherment", "server auth", "client auth"],
+        "expiry": "8760h"
+      }
+    }
+  }
+}
+EOF
+```
+
+#### 4. 產生新的憑證
+
+```bash
+cfssl gencert -ca=/etc/ssl/etcd/ssl/ca.pem \  #這裡要確保路徑正確!!
+  -ca-key=/etc/ssl/etcd/ssl/ca-key.pem \
+  -config=/etc/ssl/etcd/ssl/ca-config.json \
+  -profile=etcd etcd-csr.json | cfssljson -bare member-$HOSTNAME
+```
+
+這將產生 `member-$HOSTNAME.pem` 和 `member-$HOSTNAME-key.pem` 兩個文件。
+
+#### 5. 備份並替換原有憑證
+
+```bash
+# 備份原有憑證
+cp /etc/ssl/etcd/ssl/member-2503debian.pem /etc/ssl/etcd/ssl/member-2503debian.pem.bak
+cp /etc/ssl/etcd/ssl/member-2503debian-key.pem /etc/ssl/etcd/ssl/member-2503debian-key.pem.bak
+
+# 複製新憑證到指定位置
+cp member-2503debian.pem /etc/ssl/etcd/ssl/
+cp member-2503debian-key.pem /etc/ssl/etcd/ssl/
+```
+
+#### 6. 重新啟動 etcd 服務並驗證
+
+```bash
+sudo systemctl restart etcd
+sudo systemctl status etcd
+```
+
+## 注意事項
+
+- 請確保在 hosts 列表中包含所有必要的 IP 地址
+- 操作前務必備份原有的憑證文件
+- 如果是多節點集群，可能需要在所有 etcd 節點上執行類似操作
+
+## 疑難排解
+
+如果重啟 etcd 服務後仍然出現問題，可以檢查：
+
+1. 日誌文件：`journalctl -u etcd`
+2. 確認憑證權限正確
+3. 檢查 etcd 配置文件中的證書路徑是否正確
+
+---
+
+*最後更新: 2025年4月24日*
