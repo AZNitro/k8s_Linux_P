@@ -13,8 +13,8 @@
 ## 📚 內容目錄
 
 ### 🔧 故障排除指南
-1. [修復 K8S etcd TLS 憑證問題指南](./1-etcd-tls-fix-guide.md)
-2. [SSH 雙重認證 (2FA) 設定與故障排除指南](./2.SSH-2FA-Setup-Guide.md)
+1. [修復 K8S etcd TLS 憑證問題指南](./Kubernetes/1.update-etcd-certs.md)
+2. [SSH 雙重認證 (2FA) 設定與故障排除指南](./Linux/2.SSH-2FA-Setup-Guide.md)
 
 ### 🛠️ 配置檔案
 - Kubernetes 部署配置
